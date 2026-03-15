@@ -14,6 +14,19 @@ import { HeroPickerSheet } from "@/components/HeroPickerSheet";
 import { HeroDetailSheet } from "@/components/HeroDetailSheet";
 import type { Role } from "@/lib/types";
 
+// import
+import { StadiumDraftInfoPanel } from "@/components/StadiumDraftInfoPanel";
+
+// left column placement
+<MatchContext />
+<OnboardingHint />
+<FirstRunMainsHelper />
+<ProfilePanel />
+<FastAccessPanel />
+<MatchBoard onOpenSlot={openPicker} />
+<StadiumDraftInfoPanel />
+<StadiumBuildPanel />
+
 export default function Page() {
   const {
     team,
