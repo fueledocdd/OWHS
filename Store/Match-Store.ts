@@ -1,123 +1,142 @@
-import { create } from "zustand";
-import type { MatchFormat, Mode, Rank, Recommendation, ResolvedHero, Role } from "@/lib/types";
-import { resolvedHeroes } from "@/lib/data/resolvedHeroes";
-import { rankRecommendations } from "@/lib/scoring/recommendations";
+// add imports
+import type { DraftContext, DraftSlotState, DraftTeamSide, DraftPhase } from "@/lib/types/draft";
+import { rankStadiumDraftRecommendations } from "@/lib/scoring/stadiumDraft";
 
-function unique<T>(items: T[]) {
-  return Array.from(new Set(items));
+function buildDefaultDraftSlots(matchFormat: MatchFormat): DraftSlotState[] {
+  const teamSize = getTeamSize(matchFormat);
+  const slots: DraftSlotState[] = [];
+
+  for (let i = 0; i < teamSize; i += 1) {
+    slots.push({ team: "ally", slotIndex: i, isKnown: false });
+  }
+  for (let i = 0; i < teamSize; i += 1) {
+    slots.push({ team: "enemy", slotIndex: i, isKnown: false });
+  }
+
+  return slots;
 }
-
-function getTeamSize(matchFormat: MatchFormat) {
-  return matchFormat === "6v6" ? 6 : 5;
-}
-
-type ActiveSelection = {
-  side: "team" | "enemy";
-  index: number;
-};
 
 type MatchStore = {
-  matchFormat: MatchFormat;
-  selectedRole: Role;
-  selectedMode: Mode;
-  selectedMap: string;
-  selectedRank: Rank;
-  team: (ResolvedHero | null)[];
-  enemy: (ResolvedHero | null)[];
-  favoriteHeroIds: string[];
-  recentHeroIds: string[];
-  detailHero: Recommendation | null;
-  activeSelection: ActiveSelection;
-  setMatchFormat: (format: MatchFormat) => void;
-  setSelectedRole: (role: Role) => void;
-  setSelectedMode: (mode: Mode) => void;
-  setSelectedMap: (map: string) => void;
-  setSelectedRank: (rank: Rank) => void;
-  setTeamHero: (index: number, hero: ResolvedHero | null) => void;
-  setEnemyHero: (index: number, hero: ResolvedHero | null) => void;
-  setActiveSelection: (selection: ActiveSelection) => void;
-  clearMatch: () => void;
-  toggleFavorite: (heroId: string) => void;
-  setDetailHero: (hero: Recommendation | null) => void;
-  getRecommendations: () => Recommendation[];
+  // existing fields...
+  draftContext: DraftContext;
+  setDraftPhase: (phase: DraftPhase) => void;
+  setDraftSlotKnownHero: (team: DraftTeamSide, slotIndex: number, heroId?: string) => void;
+  setDraftSlotExpectedRole: (team: DraftTeamSide, slotIndex: number, role?: Role) => void;
+  setDraftSlotKnownState: (team: DraftTeamSide, slotIndex: number, isKnown: boolean) => void;
+  resetDraftContext: () => void;
 };
 
-export const useMatchStore = create<MatchStore>((set, get) => ({
-  matchFormat: "5v5",
-  selectedRole: "DPS",
-  selectedMode: "Competitive",
-  selectedMap: "King's Row",
-  selectedRank: "Gold",
-  team: Array(getTeamSize("5v5")).fill(null),
-  enemy: Array(getTeamSize("5v5")).fill(null),
-  favoriteHeroIds: ["ana", "soldier76", "dva"],
-  recentHeroIds: ["cassidy", "kiriko", "sigma"],
-  detailHero: null,
-  activeSelection: { side: "team", index: 0 },
-  setMatchFormat: (matchFormat) =>
-    set({
-      matchFormat,
-      team: Array(getTeamSize(matchFormat)).fill(null),
-      enemy: Array(getTeamSize(matchFormat)).fill(null),
-      activeSelection: { side: "team", index: 0 },
-    }),
-  setSelectedRole: (selectedRole) => set({ selectedRole }),
-  setSelectedMode: (selectedMode) => set({ selectedMode }),
-  setSelectedMap: (selectedMap) => set({ selectedMap }),
-  setSelectedRank: (selectedRank) => set({ selectedRank }),
-  setActiveSelection: (activeSelection) => set({ activeSelection }),
-  setTeamHero: (index, hero) => {
-    const next = [...get().team];
-    next[index] = hero;
-    set({
-      team: next,
-      activeSelection: { side: "team", index },
-      recentHeroIds: hero ? unique([hero.id, ...get().recentHeroIds]).slice(0, 6) : get().recentHeroIds,
-    });
-  },
-  setEnemyHero: (index, hero) => {
-    const next = [...get().enemy];
-    next[index] = hero;
-    set({
-      enemy: next,
-      activeSelection: { side: "enemy", index },
-    });
-  },
-  clearMatch: () =>
-    set({
-      team: Array(getTeamSize(get().matchFormat)).fill(null),
-      enemy: Array(getTeamSize(get().matchFormat)).fill(null),
-      detailHero: null,
-      activeSelection: { side: "team", index: 0 },
-    }),
-  toggleFavorite: (heroId) => {
-    const current = get().favoriteHeroIds;
-    set({
-      favoriteHeroIds: current.includes(heroId)
-        ? current.filter((id) => id !== heroId)
-        : [...current, heroId],
-    });
-  },
-  setDetailHero: (detailHero) => set({ detailHero }),
-  getRecommendations: () => {
-    const state = get();
-    const alliedHeroes = state.team.filter(Boolean) as ResolvedHero[];
-    const enemyHeroes = state.matchFormat === "stadium"
-      ? []
-      : (state.enemy.filter(Boolean) as ResolvedHero[]);
-    const candidates = resolvedHeroes.filter(
-      (hero) => hero.role === state.selectedRole && !alliedHeroes.some((ally) => ally.id === hero.id),
-    );
+// in initial state
+ draftContext: {
+   enabled: false,
+   phase: "prepick",
+   slots: buildDefaultDraftSlots("5v5"),
+ },
 
-    return rankRecommendations(
-      candidates,
-      alliedHeroes,
-      enemyHeroes,
-      state.selectedMap,
-      state.selectedRank,
-      state.selectedMode,
-      state.favoriteHeroIds,
-      state.recentHeroIds,
-    );
-  },
-}));
+// in setMatchFormat
+ setMatchFormat: (matchFormat) => {
+   const defaults = getOnboardingDefaults(matchFormat);
+   set({
+     matchFormat,
+     selectedMode: defaults.selectedMode,
+     selectedRole: defaults.selectedRole,
+     selectedRank: defaults.selectedRank,
+     selectedMap: defaults.selectedMap ?? get().selectedMap,
+     team: Array(getTeamSize(matchFormat)).fill(null),
+     enemy: Array(getTeamSize(matchFormat)).fill(null),
+     activeSelection: { side: "team", index: 0 },
+     detailHero: null,
+     banPhase: { bannedHeroIds: [], preferredHeroId: undefined },
+     draftContext: {
+       enabled: matchFormat === "stadium",
+       phase: "prepick",
+       slots: buildDefaultDraftSlots(matchFormat),
+     },
+   });
+   get().persistState();
+ },
+
+// add implementations
+setDraftPhase: (phase) => {
+  set({ draftContext: { ...get().draftContext, phase } });
+},
+
+setDraftSlotKnownHero: (team, slotIndex, heroId) => {
+  const slots = get().draftContext.slots.map((slot) => {
+    if (slot.team === team && slot.slotIndex === slotIndex) {
+      return {
+        ...slot,
+        heroId,
+        isKnown: !!heroId,
+      };
+    }
+    return slot;
+  });
+
+  set({ draftContext: { ...get().draftContext, slots } });
+},
+
+setDraftSlotExpectedRole: (team, slotIndex, role) => {
+  const slots = get().draftContext.slots.map((slot) => {
+    if (slot.team === team && slot.slotIndex === slotIndex) {
+      return { ...slot, expectedRole: role };
+    }
+    return slot;
+  });
+
+  set({ draftContext: { ...get().draftContext, slots } });
+},
+
+setDraftSlotKnownState: (team, slotIndex, isKnown) => {
+  const slots = get().draftContext.slots.map((slot) => {
+    if (slot.team === team && slot.slotIndex === slotIndex) {
+      return {
+        ...slot,
+        isKnown,
+        heroId: isKnown ? slot.heroId : undefined,
+      };
+    }
+    return slot;
+  });
+
+  set({ draftContext: { ...get().draftContext, slots } });
+},
+
+resetDraftContext: () => {
+  const matchFormat = get().matchFormat;
+  set({
+    draftContext: {
+      enabled: matchFormat === "stadium",
+      phase: "prepick",
+      slots: buildDefaultDraftSlots(matchFormat),
+    },
+  });
+},
+
+// inside getRecommendations()
+if (state.matchFormat === "stadium" && state.draftContext.enabled) {
+  const knownAllies = state.draftContext.slots
+    .filter((slot) => slot.team === "ally" && slot.isKnown && slot.heroId)
+    .map((slot) => resolvedHeroes.find((hero) => hero.id === slot.heroId))
+    .filter(Boolean) as ResolvedHero[];
+
+  const knownEnemies = state.draftContext.slots
+    .filter((slot) => slot.team === "enemy" && slot.isKnown && slot.heroId)
+    .map((slot) => resolvedHeroes.find((hero) => hero.id === slot.heroId))
+    .filter(Boolean) as ResolvedHero[];
+
+  const userComfortByHeroId = Object.fromEntries(
+    state.userProfile.heroPreferences.map((pref) => [pref.heroId, pref.comfort]),
+  );
+
+  return rankStadiumDraftRecommendations({
+    candidates,
+    alliedHeroes: knownAllies,
+    enemyHeroes: knownEnemies,
+    selectedMap: state.selectedMap,
+    selectedRank: state.selectedRank,
+    selectedMode: state.selectedMode,
+    draft: state.draftContext,
+    userComfortByHeroId,
+  });
+}
