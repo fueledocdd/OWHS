@@ -1,5 +1,6 @@
 import type { Recommendation, ResolvedHero, Role } from "@/lib/types";
 import type { DraftContext } from "@/lib/types/draft";
+import { getResolvedHero } from "@/lib/data/resolvedHeroes";
 import { scoreHero } from "@/lib/scoring/recommendations";
 
 function countKnownSlots(draft: DraftContext) {
@@ -17,29 +18,55 @@ function estimateDraftCertainty(draft: DraftContext) {
 }
 
 function commonUnseenThreatIds(role?: Role): string[] {
-  if (role === "Tank") return ["reaper", "bastion", "ana", "zarya"];
-  if (role === "DPS") return ["cassidy", "brigitte", "dva", "winston"];
-  if (role === "Support") return ["tracer", "genji", "sombra", "widowmaker"];
+  if (role === "Tank") return ["reinhardt", "zarya", "winston", "dva"];
+  if (role === "DPS") return ["reaper", "cassidy", "tracer", "bastion"];
+  if (role === "Support") return ["ana", "brigitte", "kiriko", "lucio"];
   return ["ana", "tracer", "reaper", "widowmaker"];
+}
+
+function threatCountersCandidate(candidate: ResolvedHero, threatId: string) {
+  const threat = getResolvedHero(threatId);
+  if (!threat) return false;
+
+  return (
+    threat.strongInto.includes(candidate.id) ||
+    threat.strongInto.includes(candidate.name)
+  );
+}
+
+function candidateHandlesThreat(candidate: ResolvedHero, threatId: string) {
+  return (
+    candidate.strongInto.includes(threatId) ||
+    candidate.strongInto.includes(getResolvedHero(threatId)?.name ?? "")
+  );
 }
 
 function getStabilityModifier(candidate: ResolvedHero, likelyThreatIds: string[]) {
   let score = 0;
   const reasons: string[] = [];
 
-  const hardCounters = likelyThreatIds.filter(
-    (threatId) => candidate.strongInto.includes(threatId) === false && candidate.strongInto.includes(threatId) !== true,
+  const uniqueThreatIds = Array.from(new Set(likelyThreatIds));
+  const trueCounters = uniqueThreatIds.filter((threatId) =>
+    threatCountersCandidate(candidate, threatId),
+  );
+  const favorableMatchups = uniqueThreatIds.filter((threatId) =>
+    candidateHandlesThreat(candidate, threatId),
   );
 
-  if (hardCounters.length === 0) {
+  if (trueCounters.length === 0) {
     score += 3;
     reasons.push("Looks stable into the most likely unseen threats");
-  } else if (hardCounters.length <= 1) {
+  } else if (trueCounters.length === 1) {
     score += 1;
     reasons.push("Should remain playable even if the last hidden pick is hostile");
   } else {
     score -= 2;
-    reasons.push("More fragile if the unrevealed picks are hard counters");
+    reasons.push("More fragile if the unrevealed picks are natural counters");
+  }
+
+  if (favorableMatchups.length >= 2) {
+    score += 1;
+    reasons.push("Still has useful upside into several likely hidden picks");
   }
 
   return { score, reasons };
@@ -83,9 +110,11 @@ export function rankStadiumDraftRecommendations(args: {
         userComfortByHeroId,
       ) as Recommendation;
 
-      const likelyThreatIds = unseenEnemyRoles.flatMap((role) => commonUnseenThreatIds(role));
-      const stability = getStabilityModifier(candidate, likelyThreatIds);
+      const likelyThreatIds = unseenEnemyRoles.flatMap((role) =>
+        commonUnseenThreatIds(role),
+      );
 
+      const stability = getStabilityModifier(candidate, likelyThreatIds);
       const uncertaintyWeight = 1 - certainty;
       const stabilityBonus = Math.round(stability.score * 6 * uncertaintyWeight);
 
